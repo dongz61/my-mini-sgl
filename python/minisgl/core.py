@@ -8,6 +8,7 @@ import torch
 
 if TYPE_CHECKING:
     from minisgl.attention import BaseAttnBackend, BaseAttnMetadata
+    from minisgl.attention.decode_context import DecodeContextConfig
     from minisgl.kvcache import BaseCacheHandle, BaseKVCachePool
     from minisgl.moe import BaseMoeBackend
 
@@ -100,6 +101,7 @@ class Batch:
 @dataclass
 class Context:
     page_size: int
+    decode_context_config: DecodeContextConfig | None = None
     # NOTE: this table always treat page_size = 1
     page_table: torch.Tensor = field(init=False)
     attn_backend: BaseAttnBackend = field(init=False)

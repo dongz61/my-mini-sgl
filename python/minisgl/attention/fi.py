@@ -12,6 +12,7 @@ from minisgl.env import ENV
 from minisgl.utils import div_even, init_logger
 
 from .base import BaseAttnBackend, BaseAttnMetadata
+from .decode_context import select_decode_positions
 from .utils import BaseCaptureData
 
 if TYPE_CHECKING:
@@ -192,12 +193,34 @@ class FlashInferBackend(BaseAttnBackend):
 
         padded_size = len(reqs)
         seqlens_q = [req.extend_len for req in reqs]
-        seqlens_k = [req.device_len for req in reqs]
         cached_lens = [req.cached_len for req in reqs]
         max_seqlen_q = max(seqlens_q)
         CPU_KWARGS = {"device": "cpu", "dtype": torch.int32, "pin_memory": True}
 
         device = self.device
+        page_table = get_global_ctx().page_table
+        decode_context_config = get_global_ctx().decode_context_config
+        use_sparse_decode = (
+            batch.is_decode
+            and decode_context_config is not None
+            and not decode_context_config.is_dense
+        )
+        indices_list: List[torch.Tensor] = []
+        seqlens_k: List[int] = []
+        for req in reqs:
+            if use_sparse_decode:
+                positions = select_decode_positions(
+                    seq_len=req.device_len,
+                    req_uid=req.uid,
+                    config=decode_context_config,
+                )
+                pos_tensor = torch.tensor(positions, dtype=torch.int64, device=device)
+                indices_list.append(page_table[req.table_idx, pos_tensor])
+                seqlens_k.append(len(positions))
+            else:
+                indices_list.append(page_table[req.table_idx, : req.device_len])
+                seqlens_k.append(req.device_len)
+
         seq_len_cpu = torch.tensor(seqlens_k, **CPU_KWARGS)
         cu_seqlens_k_cpu = torch.tensor([0] + seqlens_k, **CPU_KWARGS).cumsum_(dim=0)
         if max_seqlen_q == 1:  # decode with all extend_len = 1
@@ -207,12 +230,11 @@ class FlashInferBackend(BaseAttnBackend):
         else:  # normal extend prefill, with partial cache hit
             cu_seqlens_q_cpu = torch.tensor([0] + seqlens_q, **CPU_KWARGS).cumsum_(dim=0)
 
-        page_table = get_global_ctx().page_table
         batch.attn_metadata = FIMetadata(
             cu_seqlens_q_cpu=cu_seqlens_q_cpu,
             cu_seqlens_k_cpu=cu_seqlens_k_cpu,
             cu_seqlens_q_gpu=cu_seqlens_q_cpu.to(device, non_blocking=True),
-            indices=torch.cat([page_table[req.table_idx, : req.device_len] for req in reqs]),
+            indices=torch.cat(indices_list),
             last_page_len_cpu=self._get_ones_cpu(padded_size),
             num_qo_heads=self.qo_head_local,
             num_kv_heads=self.kv_head_local,

@@ -29,6 +29,11 @@ class EngineConfig:
     use_pynccl: bool = True
     max_seq_len_override: int | None = None
     num_page_override: int | None = None  # if not None, will override the number of pages
+    decode_context_mode: str = "dense"
+    decode_context_block_size: int = 1
+    decode_context_block_num: int | None = None
+    decode_context_prefix_block_num: int = 0
+    decode_context_random_seed: int = 42
 
     @cached_property
     def hf_config(self):

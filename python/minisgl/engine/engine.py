@@ -5,6 +5,7 @@ from typing import Any, Dict, NamedTuple, Tuple
 
 import torch
 from minisgl.attention import create_attention_backend
+from minisgl.attention.decode_context import DecodeContextConfig
 from minisgl.core import Batch, Context, Req, set_global_ctx
 from minisgl.distributed import destroy_distributed, enable_pynccl_distributed, set_tp_info
 from minisgl.kvcache import create_kvcache_pool
@@ -39,6 +40,14 @@ class Engine:
         torch.cuda.set_stream(self.stream)
         self.dtype = config.dtype
         self.ctx = Context(config.page_size)
+        self.ctx.decode_context_config = DecodeContextConfig(
+            mode=config.decode_context_mode,
+            block_size=config.decode_context_block_size,
+            block_num=config.decode_context_block_num,
+            prefix_block_num=config.decode_context_prefix_block_num,
+            random_seed=config.decode_context_random_seed,
+        )
+        self.ctx.decode_context_config.validate()
         set_global_ctx(self.ctx)
 
         self.tp_cpu_group = self._init_communication(config)
@@ -227,6 +236,19 @@ def _adjust_config(config: EngineConfig):
     if "trtllm" in config.attention_backend and config.page_size not in [16, 32, 64]:
         override("page_size", 64)
         logger.warning_rank0("Page size is overridden to 64 for TRTLLM backend")
+
+    sparse_decode = config.decode_context_mode != "dense"
+    if sparse_decode:
+        decode_backend = config.attention_backend.split(",")[-1]
+        if decode_backend != "fi":
+            raise ValueError(
+                "Sparse decode context is only implemented for FlashInfer decode backend. "
+                "Set attention_backend='fi' or use a hybrid backend ending with ',fi'."
+            )
+        if config.cuda_graph_bs or config.cuda_graph_max_bs != 0:
+            override("cuda_graph_bs", [])
+            override("cuda_graph_max_bs", 0)
+            logger.warning_rank0("CUDA graph is disabled for sparse decode context experiments")
 
     if config.model_config.is_moe and config.moe_backend == "auto":
         override("moe_backend", "fused")
