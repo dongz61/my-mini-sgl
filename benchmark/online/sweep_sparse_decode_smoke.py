@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patterns", default="recent,uniform")
     parser.add_argument("--block-sizes", default="64")
     parser.add_argument("--select-ratios", default="0.25,0.5")
+    parser.add_argument("--prefix-block-num", type=int, default=2)
+    parser.add_argument("--random-seed", type=int, default=42)
     parser.add_argument("--include-dense", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output-len", type=int, default=128)
     parser.add_argument("--num-prompts", type=int, default=1)
@@ -83,6 +85,8 @@ def build_experiments(args: argparse.Namespace) -> List[Dict[str, Any]]:
                     "total_blocks": None,
                     "select_ratio_target": 1.0,
                     "block_num": None,
+                    "prefix_block_num": None,
+                    "random_seed": None,
                     "selected_tokens": context_len,
                     "select_ratio_actual": 1.0,
                     "request_body": {"decode_context_mode": "dense"},
@@ -104,12 +108,26 @@ def build_experiments(args: argparse.Namespace) -> List[Dict[str, Any]]:
                             "total_blocks": total_blocks,
                             "select_ratio_target": ratio,
                             "block_num": block_num,
+                            "prefix_block_num": (
+                                args.prefix_block_num if pattern == "prefix_recent" else None
+                            ),
+                            "random_seed": args.random_seed if pattern == "random" else None,
                             "selected_tokens": selected_tokens,
                             "select_ratio_actual": selected_tokens / context_len,
                             "request_body": {
                                 "decode_context_mode": pattern,
                                 "decode_context_block_size": block_size,
                                 "decode_context_block_num": block_num,
+                                **(
+                                    {"decode_context_prefix_block_num": args.prefix_block_num}
+                                    if pattern == "prefix_recent"
+                                    else {}
+                                ),
+                                **(
+                                    {"decode_context_random_seed": args.random_seed}
+                                    if pattern == "random"
+                                    else {}
+                                ),
                             },
                         }
                     )
