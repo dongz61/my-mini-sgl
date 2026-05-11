@@ -195,6 +195,42 @@ def parse_args(args: List[str], run_shell: bool = False) -> Tuple[ServerArgs, bo
     )
 
     parser.add_argument(
+        "--decode-context-mode",
+        type=str,
+        default=ServerArgs.decode_context_mode,
+        choices=["dense", "recent", "uniform", "random", "prefix_recent"],
+        help="Decode KV context selection mode. Non-dense modes require FlashInfer decode backend.",
+    )
+
+    parser.add_argument(
+        "--decode-context-block-size",
+        type=int,
+        default=ServerArgs.decode_context_block_size,
+        help="Number of contiguous tokens in each selected decode context block.",
+    )
+
+    parser.add_argument(
+        "--decode-context-block-num",
+        type=int,
+        default=ServerArgs.decode_context_block_num,
+        help="Number of decode context blocks to keep for each decode step.",
+    )
+
+    parser.add_argument(
+        "--decode-context-prefix-block-num",
+        type=int,
+        default=ServerArgs.decode_context_prefix_block_num,
+        help="Number of prefix blocks to keep for prefix_recent decode context mode.",
+    )
+
+    parser.add_argument(
+        "--decode-context-random-seed",
+        type=int,
+        default=ServerArgs.decode_context_random_seed,
+        help="Random seed for random decode context block selection.",
+    )
+
+    parser.add_argument(
         "--model-source",
         type=str,
         default="huggingface",
