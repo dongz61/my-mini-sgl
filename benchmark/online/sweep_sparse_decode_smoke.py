@@ -216,7 +216,7 @@ async def main() -> None:
 
     experiments = build_experiments(args)
     base_url = f"http://{args.host}:{args.port}/v1"
-    async with OpenAI(base_url=base_url, api_key="") as client:
+    async with OpenAI(base_url=base_url, api_key="EMPTY") as client:
         model = args.model or await get_model_name(client)
 
         for run_id, exp in enumerate(experiments):
