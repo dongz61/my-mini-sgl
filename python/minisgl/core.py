@@ -20,10 +20,19 @@ class SamplingParams:
     top_p: float = 1.0
     ignore_eos: bool = False
     max_tokens: int = 1024
+    decode_context_mode: str | None = None
+    decode_context_block_size: int | None = None
+    decode_context_block_num: int | None = None
+    decode_context_prefix_block_num: int | None = None
+    decode_context_random_seed: int | None = None
 
     @property
     def is_greedy(self) -> bool:
         return (self.temperature <= 0.0 or self.top_k == 1) and self.top_p == 1.0
+
+    @property
+    def uses_sparse_decode_context(self) -> bool:
+        return self.decode_context_mode is not None and self.decode_context_mode != "dense"
 
 
 @dataclass(eq=False)

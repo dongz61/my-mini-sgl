@@ -60,6 +60,7 @@ async def benchmark_one(
     prompt: str,
     output_len: int,
     model: str,
+    extra_body: Dict[str, Any],
 ) -> List[float]:
     response = await client.chat.completions.create(
         model=model,
@@ -67,7 +68,7 @@ async def benchmark_one(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=output_len,
         temperature=0.0,
-        extra_body={"ignore_eos": True, "top_k": 1},
+        extra_body={"ignore_eos": True, "top_k": 1, **extra_body},
     )
     tics = [time.perf_counter()]
     async for _ in response:
@@ -80,8 +81,9 @@ async def benchmark_batch(
     prompts: List[str],
     output_len: int,
     model: str,
+    extra_body: Dict[str, Any],
 ) -> List[List[float]]:
-    tasks = [benchmark_one(client, prompt, output_len, model) for prompt in prompts]
+    tasks = [benchmark_one(client, prompt, output_len, model, extra_body) for prompt in prompts]
     return await asyncio.gather(*tasks)
 
 
@@ -151,12 +153,28 @@ def append_jsonl(path: str, records: List[Dict[str, Any]]) -> None:
             f.write(json.dumps(record) + "\n")
 
 
+def make_decode_context_body(args: argparse.Namespace) -> Dict[str, Any]:
+    if args.decode_context_mode == "unknown":
+        return {}
+    body: Dict[str, Any] = {"decode_context_mode": args.decode_context_mode}
+    if args.decode_context_block_size > 0:
+        body["decode_context_block_size"] = args.decode_context_block_size
+    if args.decode_context_block_num > 0:
+        body["decode_context_block_num"] = args.decode_context_block_num
+    if args.decode_context_prefix_block_num > 0:
+        body["decode_context_prefix_block_num"] = args.decode_context_prefix_block_num
+    if args.decode_context_random_seed >= 0:
+        body["decode_context_random_seed"] = args.decode_context_random_seed
+    return body
+
+
 async def main() -> None:
     args = parse_args()
     from openai import AsyncOpenAI as OpenAI
     from transformers import AutoTokenizer
 
     random.seed(args.seed)
+    extra_body = make_decode_context_body(args)
 
     base_url = f"http://{args.host}:{args.port}/v1"
     async with OpenAI(base_url=base_url, api_key="") as client:
@@ -167,10 +185,10 @@ async def main() -> None:
 
         if args.warmup > 0:
             warmup_prompts = [prompt] * args.warmup
-            await benchmark_batch(client, warmup_prompts, args.output_len, model)
+            await benchmark_batch(client, warmup_prompts, args.output_len, model, extra_body)
 
         started_at = time.perf_counter()
-        raw_results = await benchmark_batch(client, prompts, args.output_len, model)
+        raw_results = await benchmark_batch(client, prompts, args.output_len, model, extra_body)
         finished_at = time.perf_counter()
 
     summary = summarize(raw_results, started_at, finished_at)

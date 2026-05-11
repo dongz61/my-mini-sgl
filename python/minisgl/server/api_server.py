@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Literal, Tuple
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from minisgl.core import SamplingParams
 from minisgl.env import ENV
@@ -54,6 +54,11 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int
     ignore_eos: bool = False
+    decode_context_mode: str | None = None
+    decode_context_block_size: int | None = None
+    decode_context_block_num: int | None = None
+    decode_context_prefix_block_num: int | None = None
+    decode_context_random_seed: int | None = None
 
 
 class Message(BaseModel):
@@ -81,6 +86,11 @@ class OpenAICompletionRequest(BaseModel):
     frequency_penalty: float = 0.0
 
     ignore_eos: bool = False
+    decode_context_mode: str | None = None
+    decode_context_block_size: int | None = None
+    decode_context_block_num: int | None = None
+    decode_context_prefix_block_num: int | None = None
+    decode_context_random_seed: int | None = None
 
 
 class ModelCard(BaseModel):
@@ -94,6 +104,61 @@ class ModelCard(BaseModel):
 class ModelList(BaseModel):
     object: str = "list"
     data: List[ModelCard] = Field(default_factory=list)
+
+
+def _make_sampling_params(req: GenerateRequest | OpenAICompletionRequest) -> SamplingParams:
+    kwargs = {
+        "ignore_eos": req.ignore_eos,
+        "max_tokens": req.max_tokens,
+        "decode_context_mode": req.decode_context_mode,
+        "decode_context_block_size": req.decode_context_block_size,
+        "decode_context_block_num": req.decode_context_block_num,
+        "decode_context_prefix_block_num": req.decode_context_prefix_block_num,
+        "decode_context_random_seed": req.decode_context_random_seed,
+    }
+    if isinstance(req, OpenAICompletionRequest):
+        kwargs.update(
+            {
+                "temperature": req.temperature,
+                "top_k": req.top_k,
+                "top_p": req.top_p,
+            }
+        )
+    return SamplingParams(**kwargs)
+
+
+def _validate_decode_context_request(
+    req: GenerateRequest | OpenAICompletionRequest,
+    state: FrontendManager,
+) -> None:
+    mode = req.decode_context_mode
+    if mode is None or mode == "dense":
+        return
+    if mode not in {"recent", "uniform", "random", "prefix_recent"}:
+        raise HTTPException(status_code=400, detail=f"Unsupported decode_context_mode: {mode}")
+    decode_backend = state.config.attention_backend.split(",")[-1]
+    if decode_backend != "fi":
+        raise HTTPException(
+            status_code=400,
+            detail="Request-level sparse decode context requires FlashInfer decode backend.",
+        )
+    if req.decode_context_block_num is None:
+        raise HTTPException(
+            status_code=400,
+            detail="decode_context_block_num is required for sparse decode context modes.",
+        )
+    if req.decode_context_block_size is not None and req.decode_context_block_size <= 0:
+        raise HTTPException(status_code=400, detail="decode_context_block_size must be positive.")
+    if req.decode_context_block_num <= 0:
+        raise HTTPException(status_code=400, detail="decode_context_block_num must be positive.")
+    if (
+        req.decode_context_prefix_block_num is not None
+        and req.decode_context_prefix_block_num < 0
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="decode_context_prefix_block_num must be non-negative.",
+        )
 
 
 @dataclass
@@ -229,15 +294,13 @@ app = FastAPI(title="MiniSGL API Server", version="0.0.1", lifespan=lifespan)
 async def generate(req: GenerateRequest, request: Request):
     logger.debug("Received generate request %s", req)
     state = get_global_state()
+    _validate_decode_context_request(req, state)
     uid = state.new_user()
     await state.send_one(
         TokenizeMsg(
             uid=uid,
             text=req.prompt,
-            sampling_params=SamplingParams(
-                ignore_eos=req.ignore_eos,
-                max_tokens=req.max_tokens,
-            ),
+            sampling_params=_make_sampling_params(req),
         )
     )
 
@@ -255,6 +318,7 @@ async def v1_root():
 @app.post("/v1/chat/completions")
 async def v1_completions(req: OpenAICompletionRequest, request: Request):
     state = get_global_state()
+    _validate_decode_context_request(req, state)
     if req.messages:
         prompt = [msg.model_dump() for msg in req.messages]
     else:
@@ -267,13 +331,7 @@ async def v1_completions(req: OpenAICompletionRequest, request: Request):
         TokenizeMsg(
             uid=uid,
             text=prompt,
-            sampling_params=SamplingParams(
-                ignore_eos=req.ignore_eos,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                top_k=req.top_k,
-                top_p=req.top_p,
-            ),
+            sampling_params=_make_sampling_params(req),
         )
     )
 
@@ -291,6 +349,7 @@ async def available_models():
 
 async def shell_completion(req: OpenAICompletionRequest):
     state = get_global_state()
+    _validate_decode_context_request(req, state)
     assert req.messages is not None, "Shell completion only supports chat-completions"
     prompt = [msg.model_dump() for msg in req.messages]
 
@@ -300,13 +359,7 @@ async def shell_completion(req: OpenAICompletionRequest):
         TokenizeMsg(
             uid=uid,
             text=prompt,
-            sampling_params=SamplingParams(
-                ignore_eos=req.ignore_eos,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                top_k=req.top_k,
-                top_p=req.top_p,
-            ),
+            sampling_params=_make_sampling_params(req),
         )
     )
 

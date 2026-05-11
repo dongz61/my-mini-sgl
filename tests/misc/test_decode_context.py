@@ -15,6 +15,15 @@ spec.loader.exec_module(decode_context)
 
 DecodeContextConfig = decode_context.DecodeContextConfig
 select_decode_positions = decode_context.select_decode_positions
+config_from_sampling_params = decode_context.config_from_sampling_params
+
+
+class FakeSamplingParams:
+    decode_context_mode = None
+    decode_context_block_size = None
+    decode_context_block_num = None
+    decode_context_prefix_block_num = None
+    decode_context_random_seed = None
 
 
 def test_recent_decode_context_selects_tail_blocks():
@@ -89,3 +98,24 @@ def test_decode_context_requires_block_num_for_sparse_modes():
 
     with pytest.raises(ValueError):
         select_decode_positions(seq_len=10, req_uid=0, config=config)
+
+
+def test_request_decode_context_overrides_fallback():
+    fallback = DecodeContextConfig(mode="dense", block_size=1)
+    sampling_params = FakeSamplingParams()
+    sampling_params.decode_context_mode = "recent"
+    sampling_params.decode_context_block_size = 4
+    sampling_params.decode_context_block_num = 2
+
+    config = config_from_sampling_params(sampling_params, fallback)
+
+    assert select_decode_positions(seq_len=20, req_uid=0, config=config) == [
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+    ]

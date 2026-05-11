@@ -12,7 +12,7 @@ from minisgl.env import ENV
 from minisgl.utils import div_even, init_logger
 
 from .base import BaseAttnBackend, BaseAttnMetadata
-from .decode_context import select_decode_positions
+from .decode_context import config_from_sampling_params, select_decode_positions
 from .utils import BaseCaptureData
 
 if TYPE_CHECKING:
@@ -199,16 +199,16 @@ class FlashInferBackend(BaseAttnBackend):
 
         device = self.device
         page_table = get_global_ctx().page_table
-        decode_context_config = get_global_ctx().decode_context_config
-        use_sparse_decode = (
-            batch.is_decode
-            and decode_context_config is not None
-            and not decode_context_config.is_dense
-        )
+        fallback_decode_context_config = get_global_ctx().decode_context_config
         indices_list: List[torch.Tensor] = []
         seqlens_k: List[int] = []
         for req in reqs:
-            if use_sparse_decode:
+            decode_context_config = (
+                config_from_sampling_params(req.sampling_params, fallback_decode_context_config)
+                if fallback_decode_context_config is not None
+                else None
+            )
+            if batch.is_decode and decode_context_config is not None and not decode_context_config.is_dense:
                 positions = select_decode_positions(
                     seq_len=req.device_len,
                     req_uid=req.uid,

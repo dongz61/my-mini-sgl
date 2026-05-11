@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from minisgl.core import SamplingParams
 
 DecodeContextMode = Literal["dense", "recent", "uniform", "random", "prefix_recent"]
 
@@ -31,6 +34,34 @@ class DecodeContextConfig:
             raise ValueError("decode_context_block_num must be positive when set.")
         if self.prefix_block_num < 0:
             raise ValueError("decode_context_prefix_block_num must be non-negative.")
+
+
+def config_from_sampling_params(
+    sampling_params: SamplingParams,
+    fallback: DecodeContextConfig,
+) -> DecodeContextConfig:
+    if sampling_params.decode_context_mode is None:
+        return fallback
+
+    return DecodeContextConfig(
+        mode=sampling_params.decode_context_mode,
+        block_size=(
+            fallback.block_size
+            if sampling_params.decode_context_block_size is None
+            else sampling_params.decode_context_block_size
+        ),
+        block_num=sampling_params.decode_context_block_num,
+        prefix_block_num=(
+            fallback.prefix_block_num
+            if sampling_params.decode_context_prefix_block_num is None
+            else sampling_params.decode_context_prefix_block_num
+        ),
+        random_seed=(
+            fallback.random_seed
+            if sampling_params.decode_context_random_seed is None
+            else sampling_params.decode_context_random_seed
+        ),
+    )
 
 
 def select_decode_positions(seq_len: int, req_uid: int, config: DecodeContextConfig) -> list[int]:
